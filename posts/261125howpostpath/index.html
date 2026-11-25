@@ -1,0 +1,92 @@
+<!DOCTYPE html><html lang="ko"> <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Astro에서 마크다운(Markdown) 게시글 저장 경로와 URL 구조 이해하기</title><link rel="stylesheet" href="/Mein-Tech-Blog/styles/global.css"></head> <body> <header> <nav> <a href="/Mein-Tech-Blog/">홈</a> </nav> </header> <main>  <article> <h1>Astro에서 마크다운(Markdown) 게시글 저장 경로와 URL 구조 이해하기</h1> <time>2026-11-25</time> <hr> <p>Astro로 정적 기술 블로그를 구축할 때, 마크다운(<code>.md</code>) 게시글을 어디에 저장해야 하는지 그리고 그 파일이 어떤 웹 URL로 변환되는지는 <strong>Content Collections(콘텐츠 컬렉션)</strong> 규칙과 <strong>파일 기반 라우팅</strong>에 의해 결정됩니다.</p>
+<p>핵심 설정이 이루어지는 세 가지 요소를 정리합니다.</p>
+<hr>
+<h2 id="1-저장-폴더-이름을-정의하는-곳-srccontentconfigts">1. 저장 폴더 이름을 정의하는 곳: <code>src/content/config.ts</code></h2>
+<p>Astro는 기본적으로 <code>src/content/</code> 디렉터리 내부를 콘텐츠 저장소로 탐색합니다. 이 상위 경로는 Astro의 기본 규약이며, 실제 게시글이 들어갈 <strong>하위 폴더 이름</strong>은 <code>src/content/config.ts</code> 파일의 <code>collections</code> 객체 키(Key) 이름으로 결정됩니다.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="typescript"><code><span class="line"><span style="color:#6A737D">// src/content/config.ts</span></span>
+<span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> { defineCollection, z } </span><span style="color:#F97583">from</span><span style="color:#9ECBFF"> 'astro:content'</span><span style="color:#E1E4E8">;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">const</span><span style="color:#79B8FF"> postsCollection</span><span style="color:#F97583"> =</span><span style="color:#B392F0"> defineCollection</span><span style="color:#E1E4E8">({</span></span>
+<span class="line"><span style="color:#E1E4E8">  type: </span><span style="color:#9ECBFF">'content'</span><span style="color:#E1E4E8">,</span></span>
+<span class="line"><span style="color:#E1E4E8">  schema: z.</span><span style="color:#B392F0">object</span><span style="color:#E1E4E8">({</span></span>
+<span class="line"><span style="color:#E1E4E8">    title: z.</span><span style="color:#B392F0">string</span><span style="color:#E1E4E8">(),</span></span>
+<span class="line"><span style="color:#E1E4E8">    pubDate: z.</span><span style="color:#B392F0">date</span><span style="color:#E1E4E8">(),</span></span>
+<span class="line"><span style="color:#E1E4E8">    description: z.</span><span style="color:#B392F0">string</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">optional</span><span style="color:#E1E4E8">(),</span></span>
+<span class="line"><span style="color:#E1E4E8">    draft: z.</span><span style="color:#B392F0">boolean</span><span style="color:#E1E4E8">().</span><span style="color:#B392F0">default</span><span style="color:#E1E4E8">(</span><span style="color:#79B8FF">false</span><span style="color:#E1E4E8">),</span></span>
+<span class="line"><span style="color:#E1E4E8">  }),</span></span>
+<span class="line"><span style="color:#E1E4E8">});</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">export</span><span style="color:#F97583"> const</span><span style="color:#79B8FF"> collections</span><span style="color:#F97583"> =</span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#6A737D">  // 키 이름이 'posts'이므로 'src/content/posts/' 폴더를 게시글 경로로 인식합니다.</span></span>
+<span class="line"><span style="color:#E1E4E8">  posts: postsCollection,</span></span>
+<span class="line"><span style="color:#E1E4E8">};</span></span>
+<span class="line"></span>
+<span class="line"></span></code></pre>
+<ul>
+<li>만약 키 이름을 <code>blog: postsCollection</code>으로 변경하면, 실제 마크다운 저장 경로 역시 <code>src/content/blog/</code>로 바뀝니다.</li>
+</ul>
+<hr>
+<h2 id="2-정의된-경로에서-글을-불러오는-곳-getcollection">2. 정의된 경로에서 글을 불러오는 곳: <code>getCollection()</code></h2>
+<p><code>config.ts</code>에서 지정한 컬렉션 이름은 실제 화면을 렌더링하는 <code>.astro</code> 페이지에서 <code>getCollection()</code> 함수를 호출할 때 인자로 전달됩니다.</p>
+<ul>
+<li><strong>게시글 목록 페이지 (<code>src/pages/index.astro</code>)</strong></li>
+</ul>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="typescript"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> { getCollection } </span><span style="color:#F97583">from</span><span style="color:#9ECBFF"> 'astro:content'</span><span style="color:#E1E4E8">;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#6A737D">// 'posts' 폴더 내의 마크다운 파일 중 비공개(draft: true)가 아닌 글만 조회</span></span>
+<span class="line"><span style="color:#F97583">const</span><span style="color:#79B8FF"> publishedPosts</span><span style="color:#F97583"> =</span><span style="color:#F97583"> await</span><span style="color:#B392F0"> getCollection</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">'posts'</span><span style="color:#E1E4E8">, ({ </span><span style="color:#FFAB70">data</span><span style="color:#E1E4E8"> }) </span><span style="color:#F97583">=></span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#F97583">  return</span><span style="color:#E1E4E8"> data.draft </span><span style="color:#F97583">!==</span><span style="color:#79B8FF"> true</span><span style="color:#E1E4E8">;</span></span>
+<span class="line"><span style="color:#E1E4E8">});</span></span>
+<span class="line"></span>
+<span class="line"></span></code></pre>
+<ul>
+<li><strong>게시글 상세 페이지 (<code>src/pages/posts/[slug].astro</code>)</strong></li>
+</ul>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="typescript"><code><span class="line"><span style="color:#F97583">import</span><span style="color:#E1E4E8"> { getCollection } </span><span style="color:#F97583">from</span><span style="color:#9ECBFF"> 'astro:content'</span><span style="color:#E1E4E8">;</span></span>
+<span class="line"></span>
+<span class="line"><span style="color:#F97583">export</span><span style="color:#F97583"> async</span><span style="color:#F97583"> function</span><span style="color:#B392F0"> getStaticPaths</span><span style="color:#E1E4E8">() {</span></span>
+<span class="line"><span style="color:#F97583">  const</span><span style="color:#79B8FF"> posts</span><span style="color:#F97583"> =</span><span style="color:#F97583"> await</span><span style="color:#B392F0"> getCollection</span><span style="color:#E1E4E8">(</span><span style="color:#9ECBFF">'posts'</span><span style="color:#E1E4E8">, ({ </span><span style="color:#FFAB70">data</span><span style="color:#E1E4E8"> }) </span><span style="color:#F97583">=></span><span style="color:#E1E4E8"> {</span></span>
+<span class="line"><span style="color:#F97583">    return</span><span style="color:#E1E4E8"> data.draft </span><span style="color:#F97583">!==</span><span style="color:#79B8FF"> true</span><span style="color:#E1E4E8">;</span></span>
+<span class="line"><span style="color:#E1E4E8">  });</span></span>
+<span class="line"><span style="color:#6A737D">  // ...</span></span>
+<span class="line"><span style="color:#E1E4E8">}</span></span>
+<span class="line"></span>
+<span class="line"></span></code></pre>
+<hr>
+<h2 id="3-실제-웹사이트-url-경로가-결정되는-곳-srcpages">3. 실제 웹사이트 URL 경로가 결정되는 곳: <code>src/pages/</code></h2>
+<p>마크다운 파일이 저장되는 물리적 위치(<code>src/content/posts/</code>)와 별개로, 브라우저에서 접속하게 되는 <strong>URL 주소</strong>는 <code>src/pages/</code> 디렉터리의 폴더 구조를 그대로 따릅니다.</p>
+<table>
+<thead>
+<tr>
+<th>구분</th>
+<th>경로 위치</th>
+<th>역할</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>원본 글 저장</strong></td>
+<td><code>src/content/posts/hello.md</code></td>
+<td>실제 마크다운 원고가 위치하는 곳</td>
+</tr>
+<tr>
+<td><strong>라우팅 템플릿</strong></td>
+<td><code>src/pages/posts/[slug].astro</code></td>
+<td>동적 경로(<code>[slug]</code>)를 받아 HTML로 변환하는 틀</td>
+</tr>
+<tr>
+<td><strong>최종 웹 URL</strong></td>
+<td><code>https://도메인/posts/hello</code></td>
+<td>사용자가 실제로 접속하는 페이지 주소</td>
+</tr>
+</tbody>
+</table>
+<h3 id="하위-폴더로-카테고리-정리하기">하위 폴더로 카테고리 정리하기</h3>
+<p>글이 많아져 <code>src/content/posts/</code> 내부에 주제별 하위 폴더(예: <code>src/content/posts/db/mysql-index.md</code>)를 만들어 정리하더라도 별도의 설정 수정이 필요하지 않습니다. Astro가 하위 경로를 자동으로 <code>slug</code>에 포함하여 <code>.../posts/db/mysql-index</code> 형태의 URL을 자동으로 생성합니다.</p>
+<hr>
+<h2 id="요약">요약</h2>
+<ol>
+<li><strong>저장 위치 설정:</strong> <code>src/content/config.ts</code>의 <code>collections</code> 키 이름으로 <code>src/content/&#x3C;폴더명>/</code> 경로가 확정됩니다.</li>
+<li><strong>데이터 조회:</strong> 페이지 컴포넌트에서 <code>getCollection('&#x3C;폴더명>')</code>을 호출해 마크다운 데이터를 가져옵니다.</li>
+<li><strong>URL 결정:</strong> <code>src/pages/</code> 아래에 배치된 <code>[slug].astro</code> 파일의 위치에 따라 최종 배포 URL 경로가 만들어집니다.</li>
+</ol> </article>  </main> </body></html>
