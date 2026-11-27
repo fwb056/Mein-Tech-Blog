@@ -1,0 +1,147 @@
+<!DOCTYPE html><html lang="ko"> <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>[Data Engineering] 로컬 Docker로 실시간 CDC 파이프라인 구축하기 (2일 차: Kafka → ClickHouse 실시간 적재 및 정합성 처리)</title><link rel="stylesheet" href="/Mein-Tech-Blog/styles/global.css"></head> <body> <header> <nav> <a href="/Mein-Tech-Blog/">홈</a> </nav> </header> <main>  <article> <h1>[Data Engineering] 로컬 Docker로 실시간 CDC 파이프라인 구축하기 (2일 차: Kafka → ClickHouse 실시간 적재 및 정합성 처리)</h1> <time>2026-11-26</time> <hr> <h2 id="1-들어가며-sink-커넥터-없이-clickhouse-연결하기">1. 들어가며: Sink 커넥터 없이 ClickHouse 연결하기</h2>
+<p>1일 차에는 운영 DB(PostgreSQL)의 변경 로그(WAL)를 Debezium으로 캡처해 Kafka 토픽(<code>dbserver1.public.orders</code>)까지 스트리밍하는 구간을 완성했다.</p>
+<p>2일 차에는 Kafka 토픽에 적재된 JSON 이벤트를 최종 목적지인 열 지향 DB(ClickHouse)로 실시간 적재한다. 일반적으로는 Kafka Connect에 별도의 Sink 커넥터 플러그인을 설치하지만, <strong>ClickHouse는 자체적으로 Kafka와 직접 통신할 수 있는 <code>Kafka</code> 테이블 엔진과 실시간 트리거 역할을 하는 <code>Materialized View</code>를 내장</strong>하고 있다. 이를 활용하면 추가 플러그인 없이 순수 SQL만으로 고성능 적재 파이프라인을 구축할 수 있다.</p>
+<h2 id="2-2일-차-아키텍처-및-데이터-흐름">2. 2일 차 아키텍처 및 데이터 흐름</h2>
+<p>ClickHouse 내부에서는 데이터가 <strong>3단계 파이프라인</strong>을 거쳐 영구 저장된다.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>[Kafka Topic] ──(Pull)──▶ [1. orders_kafka (Kafka Engine)]</span></span>
+<span class="line"><span>                                  │</span></span>
+<span class="line"><span>                         (실시간 트리거 감지)</span></span>
+<span class="line"><span>                                  ▼</span></span>
+<span class="line"><span>                       [2. orders_mv (Materialized View)]</span></span>
+<span class="line"><span>                                  │</span></span>
+<span class="line"><span>                           (JSON 파싱 및 적재)</span></span>
+<span class="line"><span>                                  ▼</span></span>
+<span class="line"><span>                       [3. orders (ReplacingMergeTree)]</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span></code></pre>
+<ol>
+<li>
+<p><strong><code>orders_kafka</code> (Kafka 엔진 테이블):</strong> Kafka 브로커와 연결되어 메시지를 읽어오는 스트림 파이프 역할. 데이터를 영구 저장하지 않고 통과시킨다.</p>
+</li>
+<li>
+<p><strong><code>orders_mv</code> (Materialized View):</strong> <code>orders_kafka</code>에 새 데이터가 유입되는 즉시 감지하여 JSON 필드를 추출하고 타겟 테이블로 밀어 넣는 배관 역할.</p>
+</li>
+<li>
+<p><strong><code>orders</code> (ReplacingMergeTree 테이블):</strong> 실제 분석 쿼리가 수행되는 최종 영구 저장소.</p>
+</li>
+</ol>
+<h2 id="3-clickhouse-실시간-적재-파이프라인-구축-sql">3. ClickHouse 실시간 적재 파이프라인 구축 (SQL)</h2>
+<p>ClickHouse 컨테이너 CLI에 접속하여 3단 연동 테이블을 생성한다.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>docker exec -it cdc-clickhouse clickhouse-client --user admin --password password</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span></code></pre>
+<h3 id="step-1-kafka-스트림-수신용-테이블-생성">Step 1. Kafka 스트림 수신용 테이블 생성</h3>
+<p>1일 차에 Debezium 설정에서 <code>VALUE_CONVERTER_SCHEMAS_ENABLE: "false"</code>로 지정했기 때문에, 메시지 최상단의 <code>before</code>, <code>after</code>, <code>op</code>, <code>ts_ms</code> 키만 깔끔하게 수신할 수 있다.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>CREATE TABLE orders_kafka (</span></span>
+<span class="line"><span>    before Nullable(String),</span></span>
+<span class="line"><span>    after Nullable(String),</span></span>
+<span class="line"><span>    op String,</span></span>
+<span class="line"><span>    ts_ms UInt64</span></span>
+<span class="line"><span>) ENGINE = Kafka</span></span>
+<span class="line"><span>SETTINGS</span></span>
+<span class="line"><span>    kafka_broker_list = 'kafka:29092',</span></span>
+<span class="line"><span>    kafka_topic_list = 'dbserver1.public.orders',</span></span>
+<span class="line"><span>    kafka_group_name = 'clickhouse_orders_consumer',</span></span>
+<span class="line"><span>    kafka_format = 'JSONEachRow';</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span></code></pre>
+<h3 id="step-2-최종-분석용-영구-테이블-생성-replacingmergetree">Step 2. 최종 분석용 영구 테이블 생성 (<code>ReplacingMergeTree</code>)</h3>
+<p>열 지향 DB인 ClickHouse는 대량 삽입(Append-only)에 최적화되어 있어 일반 RDBMS처럼 행 단위 <code>UPDATE</code>를 직접 수행하지 않는다. 대신 CDC에서 들어온 변경 이력을 모두 쌓은 뒤, **<code>ReplacingMergeTree(ts_ms)</code> 엔진을 사용해 동일한 정렬 키(<code>order_id</code>) 중 가장 최신 타임스탬프(<code>ts_ms</code>)를 가진 행만 남기고 백그라운드에서 병합(Merge)**하는 전략을 사용한다.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>CREATE TABLE orders (</span></span>
+<span class="line"><span>    order_id Int32,</span></span>
+<span class="line"><span>    user_id Int32,</span></span>
+<span class="line"><span>    product_name String,</span></span>
+<span class="line"><span>    amount Int32,</span></span>
+<span class="line"><span>    status String,</span></span>
+<span class="line"><span>    updated_at String,</span></span>
+<span class="line"><span>    is_deleted UInt8,</span></span>
+<span class="line"><span>    ts_ms UInt64</span></span>
+<span class="line"><span>) ENGINE = ReplacingMergeTree(ts_ms)</span></span>
+<span class="line"><span>ORDER BY order_id;</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span></code></pre>
+<h3 id="step-3-실시간-적재용-materialized-view-생성">Step 3. 실시간 적재용 <code>Materialized View</code> 생성</h3>
+<p>Debezium의 작업 유형(<code>op</code>)에 따라 파싱 대상을 분기한다.</p>
+<ul>
+<li>
+<p><code>r</code>(초기 스냅샷), <code>c</code>(INSERT), <code>u</code>(UPDATE): 변경 후 데이터인 <code>after</code> JSON 객체에서 값을 추출한다.</p>
+</li>
+<li>
+<p><code>d</code>(DELETE): <code>after</code>가 <code>null</code>이므로 삭제 전 데이터인 <code>before</code> 객체에서 <code>order_id</code>를 추출하고, 논리적 삭제 플래그(<code>is_deleted = 1</code>)를 기록한다.</p>
+</li>
+</ul>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>CREATE MATERIALIZED VIEW orders_mv TO orders AS</span></span>
+<span class="line"><span>SELECT</span></span>
+<span class="line"><span>    JSONExtractInt(if(op = 'd', before, after), 'order_id') AS order_id,</span></span>
+<span class="line"><span>    JSONExtractInt(if(op = 'd', before, after), 'user_id') AS user_id,</span></span>
+<span class="line"><span>    JSONExtractString(if(op = 'd', before, after), 'product_name') AS product_name,</span></span>
+<span class="line"><span>    JSONExtractInt(if(op = 'd', before, after), 'amount') AS amount,</span></span>
+<span class="line"><span>    JSONExtractString(if(op = 'd', before, after), 'status') AS status,</span></span>
+<span class="line"><span>    JSONExtractString(if(op = 'd', before, after), 'updated_at') AS updated_at,</span></span>
+<span class="line"><span>    if(op = 'd', 1, 0) AS is_deleted,</span></span>
+<span class="line"><span>    ts_ms</span></span>
+<span class="line"><span>FROM orders_kafka</span></span>
+<span class="line"><span>WHERE op IN ('c', 'r', 'u', 'd');</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span></code></pre>
+<h2 id="4-실시간-정합성-검증-insert--update--delete">4. 실시간 정합성 검증 (<code>INSERT</code> / <code>UPDATE</code> / <code>DELETE</code>)</h2>
+<p><code>orders_mv</code> 생성 직후 Kafka 토픽에 대기 중이던 초기 데이터가 자동으로 적재된다. 이제 운영 DB(PostgreSQL)에서 삽입, 수정, 삭제를 동시에 실행하여 ClickHouse에 정확히 반영되는지 검증한다.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>docker exec -it cdc-postgres psql -U admin -d shop -c "</span></span>
+<span class="line"><span>INSERT INTO orders (user_id, product_name, amount, status) VALUES (103, 'Monitor', 350000, 'PAID');</span></span>
+<span class="line"><span>UPDATE orders SET amount = 140000 WHERE order_id = 1;</span></span>
+<span class="line"><span>DELETE FROM orders WHERE order_id = 2;</span></span>
+<span class="line"><span>"</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span></code></pre>
+<p>1~2초 후 ClickHouse에서 데이터를 조회한다. 이때 백그라운드 병합이 완료되기 전이라도 중복 제거된 최신 상태만 조회하기 위해 <strong><code>FINAL</code> 키워드</strong>를 사용한다.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>docker exec -it cdc-clickhouse clickhouse-client --user admin --password password -q \</span></span>
+<span class="line"><span>"SELECT order_id, product_name, amount, status, is_deleted FROM orders FINAL WHERE is_deleted = 0 ORDER BY order_id;"</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span></code></pre>
+<h3 id="검증-결과">검증 결과</h3>
+<ul>
+<li>
+<p><code>order_id = 1</code>: 기존 금액(150,000)이 수정된 금액(<code>140000</code>)으로 정확히 갱신됨</p>
+</li>
+<li>
+<p><code>order_id = 2</code>: 삭제(<code>is_deleted = 1</code>) 처리되어 유효 데이터 조회에서 제외됨</p>
+</li>
+<li>
+<p><code>order_id = 3</code>: 신규 삽입된 <code>'Monitor'</code> 데이터가 즉시 조회됨</p>
+</li>
+</ul>
+<h2 id="5-심화-실험-내결함성장애-복구-및-성능-검증">5. 심화 실험: 내결함성(장애 복구) 및 성능 검증</h2>
+<p>파이프라인 구축을 넘어 실무에서 핵심이 되는 두 가지 시나리오를 추가로 검증했다.</p>
+<h3 id="1-장애-격리-및-자동-복구-테스트-fault-tolerance">1) 장애 격리 및 자동 복구 테스트 (Fault Tolerance)</h3>
+<p>ClickHouse 컨테이너를 강제로 중지(<code>docker stop cdc-clickhouse</code>)한 상태에서 PostgreSQL에 신규 주문 데이터를 삽입한 뒤, 다시 ClickHouse를 기동(<code>docker start cdc-clickhouse</code>)했다.</p>
+<ul>
+<li><strong>결과:</strong> 분석계 DB가 다운된 동안에도 운영 DB(PostgreSQL)는 아무런 영향 없이 정상 동작했으며, 변경 이벤트는 Kafka 토픽에 안전하게 버퍼링되었다. ClickHouse 재기동 즉시 컨슈머 그룹 오프셋(<code>clickhouse_orders_consumer</code>)을 기반으로 밀린 데이터를 유실 없이 자동 적재하는 것을 확인했다.</li>
+</ul>
+<h3 id="2-oltp-vs-olap-대용량-집계-성능-비교">2) OLTP vs OLAP 대용량 집계 성능 비교</h3>
+<p>PostgreSQL의 <code>generate_series</code> 함수를 이용해 더미 주문 데이터 50만 건을 일괄 생성한 뒤, 상품별 주문 건수와 매출 합계를 구하는 집계 쿼리(<code>GROUP BY product_name</code>)의 실행 속도를 비교했다.</p>
+<pre class="astro-code github-dark" style="background-color:#24292e;color:#e1e4e8; overflow-x: auto;" tabindex="0" data-language="plaintext"><code><span class="line"><span>-- PostgreSQL 더미 데이터 50만 건 삽입 예시</span></span>
+<span class="line"><span>INSERT INTO orders (user_id, product_name, amount, status)</span></span>
+<span class="line"><span>SELECT</span></span>
+<span class="line"><span>    (random() * 1000)::int,</span></span>
+<span class="line"><span>    (ARRAY['Mechanical Keyboard', 'Wireless Mouse', 'Monitor', 'USB-C Hub'])[floor(random() * 4 + 1)],</span></span>
+<span class="line"><span>    (random() * 300000 + 10000)::int,</span></span>
+<span class="line"><span>    'PAID'</span></span>
+<span class="line"><span>FROM generate_series(1, 500000);</span></span>
+<span class="line"><span></span></span>
+<span class="line"><span></span></span></code></pre>
+<ul>
+<li><strong>분석:</strong> 행 지향 구조인 PostgreSQL은 전체 레코드를 순차 스캔해야 하는 반면, 열 지향 구조인 ClickHouse는 집계에 필요한 <code>product_name</code>과 <code>amount</code> 컬럼만 압축된 상태로 읽어 들여 수십 배 빠른 응답 속도를 보였다.</li>
+</ul>
+<h2 id="6-전체-실습-회고">6. 전체 실습 회고</h2>
+<p>이틀간의 실습을 통해 데이터 엔지니어링의 핵심 개념을 직접 구현하고 체득할 수 있었다.</p>
+<ol>
+<li>
+<p><strong>스토리지 아키텍처의 이해:</strong> 논리적 테이블은 동일하더라도 물리적 저장 방식(Row vs Column)에 따라 트랜잭션 처리와 대용량 집계 성능이 극명하게 갈린다는 점을 수치로 확인했다.</p>
+</li>
+<li>
+<p><strong>CDC 기반 시스템 분리:</strong> 운영 DB에 부하를 주지 않고 WAL 로그만으로 데이터를 추출하고, Kafka를 완충 지대로 두어 분석계 장애가 운영계로 전파되지 않는 안정적인 아키텍처를 설계했다.</p>
+</li>
+<li>
+<p><strong>ClickHouse 데이터 정합성 처리:</strong> Append-only 특성을 가진 열 지향 DB에서 <code>ReplacingMergeTree</code>와 <code>FINAL</code>, 논리 삭제 플래그(<code>is_deleted</code>)를 조합해 RDBMS의 변경 이력을 정합성 있게 동기화하는 실무 패턴을 익혔다.</p>
+</li>
+</ol> </article>  </main> </body></html>
