@@ -1,0 +1,184 @@
+<!DOCTYPE html><html lang="ko"> <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>MySQL vs ANSI/ISO 표준 SQL 핵심 문법 요약표</title><link rel="stylesheet" href="/Mein-Tech-Blog/styles/global.css"></head> <body> <header> <nav> <a href="/Mein-Tech-Blog/">홈</a> </nav> </header> <main>  <article> <h1>MySQL vs ANSI/ISO 표준 SQL 핵심 문법 요약표</h1> <time>2026-11-28</time> <hr> <hr>
+<h2 id="1-식별자-및-연산자-규칙">1. 식별자 및 연산자 규칙</h2>
+<table>
+<thead>
+<tr>
+<th align="left">구분</th>
+<th align="left">ANSI/ISO 표준 SQL</th>
+<th align="left">MySQL (기본 설정)</th>
+<th align="left">비고</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="left"><strong>식별자(테이블/컬럼명) 감싸기</strong></td>
+<td align="left">큰따옴표 (<code>"table_name"</code>)</td>
+<td align="left">백틱 (<code>`table_name`</code>)</td>
+<td align="left">MySQL은 기본적으로 <code>"</code>를 문자열 리터럴로 취급</td>
+</tr>
+<tr>
+<td align="left"><strong>문자열 리터럴</strong></td>
+<td align="left">작은따옴표 (<code>'text'</code>)</td>
+<td align="left">작은따옴표 (<code>'text'</code>) 또는 큰따옴표 (<code>"text"</code>)</td>
+<td align="left">호환성을 위해 작은따옴표(<code>'</code>) 사용 권장</td>
+</tr>
+<tr>
+<td align="left"><strong>문자열 연결</strong></td>
+<td align="left"><code>||</code> 연산자 (<code>'A' || 'B'</code>)</td>
+<td align="left"><code>CONCAT('A', 'B')</code></td>
+<td align="left">MySQL에서 <code>||</code>는 기본적으로 논리 연산자 <code>OR</code></td>
+</tr>
+<tr>
+<td align="left"><strong>논리 부정</strong></td>
+<td align="left"><code>&#x3C;></code> (다르다)</td>
+<td align="left"><code>!=</code> 또는 <code>&#x3C;></code></td>
+<td align="left">표준 호환을 위해 <code>&#x3C;></code> 사용 권장</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2-테이블-정의-ddl-및-자료형">2. 테이블 정의 (DDL) 및 자료형</h2>
+<table>
+<thead>
+<tr>
+<th align="left">구분</th>
+<th align="left">ANSI/ISO 표준 SQL</th>
+<th align="left">MySQL</th>
+<th align="left">비고</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="left"><strong>자동 증가 키</strong></td>
+<td align="left"><code>GENERATED ALWAYS AS IDENTITY</code></td>
+<td align="left"><code>AUTO_INCREMENT</code></td>
+<td align="left">MySQL은 표준 <code>IDENTITY</code> 문법 미지원</td>
+</tr>
+<tr>
+<td align="left"><strong>가변 문자열</strong></td>
+<td align="left"><code>CHARACTER VARYING(n)</code></td>
+<td align="left"><code>VARCHAR(n)</code></td>
+<td align="left">MySQL도 <code>CHARACTER VARYING</code>을 별칭으로 허용</td>
+</tr>
+<tr>
+<td align="left"><strong>논리형 (Boolean)</strong></td>
+<td align="left"><code>BOOLEAN</code> (<code>TRUE</code> / <code>FALSE</code>)</td>
+<td align="left"><code>TINYINT(1)</code> (<code>1</code> / <code>0</code>)</td>
+<td align="left">MySQL에서 <code>BOOLEAN</code> 선언 시 내부적으로 <code>TINYINT(1)</code>로 변환</td>
+</tr>
+<tr>
+<td align="left"><strong>날짜 및 시간</strong></td>
+<td align="left"><code>TIMESTAMP</code></td>
+<td align="left"><code>DATETIME</code> 또는 <code>TIMESTAMP</code></td>
+<td align="left">MySQL <code>TIMESTAMP</code>는 타임존 변환 지원, <code>DATETIME</code>은 입력값 그대로 저장</td>
+</tr>
+<tr>
+<td align="left"><strong>제약 조건 이름 생략</strong></td>
+<td align="left">외래 키 선언 시 이름 생략 가능</td>
+<td align="left"><code>FOREIGN KEY (...) REFERENCES ...</code></td>
+<td align="left">외래 키 삭제(<code>DROP</code>)를 위해 <code>CONSTRAINT fk_name</code> 명시 권장</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-데이터-조회-및-조작-dml">3. 데이터 조회 및 조작 (DML)</h2>
+<table>
+<thead>
+<tr>
+<th align="left">구분</th>
+<th align="left">ANSI/ISO 표준 SQL</th>
+<th align="left">MySQL</th>
+<th align="left">예시 (MySQL 기준)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="left"><strong>조회 개수 제한 (페이징)</strong></td>
+<td align="left"><code>FETCH FIRST 10 ROWS ONLY</code></td>
+<td align="left"><code>LIMIT 10</code> (또는 <code>LIMIT offset, count</code>)</td>
+<td align="left"><code>SELECT * FROM items LIMIT 10 OFFSET 20;</code></td>
+</tr>
+<tr>
+<td align="left"><strong>조건부 삽입/수정 (UPSERT)</strong></td>
+<td align="left"><code>MERGE INTO ...</code></td>
+<td align="left"><code>INSERT ... ON DUPLICATE KEY UPDATE</code></td>
+<td align="left">중복 키 발생 시 <code>UPDATE</code> 구문 실행</td>
+</tr>
+<tr>
+<td align="left"><strong>다중 행 삽입</strong></td>
+<td align="left"><code>INSERT INTO t VALUES (...), (...)</code></td>
+<td align="left"><code>INSERT INTO t VALUES (...), (...)</code></td>
+<td align="left">표준과 동일하게 지원</td>
+</tr>
+<tr>
+<td align="left"><strong>테이블 결합 (JOIN)</strong></td>
+<td align="left"><code>INNER JOIN</code>, <code>LEFT OUTER JOIN</code></td>
+<td align="left"><code>INNER JOIN</code>, <code>LEFT JOIN</code></td>
+<td align="left">표준 <code>JOIN</code> 문법 완벽 지원 (<code>OUTER</code> 키워드 생략 가능)</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="4-자주-쓰는-내장-함수-대조표">4. 자주 쓰는 내장 함수 대조표</h2>
+<table>
+<thead>
+<tr>
+<th align="left">기능</th>
+<th align="left">ANSI/ISO 표준 SQL</th>
+<th align="left">MySQL 전용 단축 함수</th>
+<th align="left">권장 사항</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="left"><strong>NULL 값 대체</strong></td>
+<td align="left"><code>COALESCE(col, '기본값')</code></td>
+<td align="left"><code>IFNULL(col, '기본값')</code></td>
+<td align="left">MySQL도 <code>COALESCE</code> 지원 (표준 사용 권장)</td>
+</tr>
+<tr>
+<td align="left"><strong>조건 분기</strong></td>
+<td align="left"><code>CASE WHEN ... THEN ... END</code></td>
+<td align="left"><code>IF(조건, 참, 거짓)</code></td>
+<td align="left">단순 2분기 외에는 표준 <code>CASE</code> 문 권장</td>
+</tr>
+<tr>
+<td align="left"><strong>현재 날짜/시간</strong></td>
+<td align="left"><code>CURRENT_TIMESTAMP</code></td>
+<td align="left"><code>NOW()</code></td>
+<td align="left">MySQL도 <code>CURRENT_TIMESTAMP</code> 지원</td>
+</tr>
+<tr>
+<td align="left"><strong>형변환 (Casting)</strong></td>
+<td align="left"><code>CAST(col AS VARCHAR(10))</code></td>
+<td align="left"><code>CAST(col AS CHAR(10))</code> / <code>CONVERT()</code></td>
+<td align="left">MySQL <code>CAST</code>에서는 <code>VARCHAR</code> 대신 <code>CHAR</code> 사용</td>
+</tr>
+<tr>
+<td align="left"><strong>문자열 자르기</strong></td>
+<td align="left"><code>SUBSTRING(col FROM 1 FOR 3)</code></td>
+<td align="left"><code>SUBSTRING(col, 1, 3)</code></td>
+<td align="left">콤마(<code>,</code>) 방식이 직관적이나 표준 구문도 지원</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="5-동작-방식-및-sql-mode-주의사항">5. 동작 방식 및 SQL Mode 주의사항</h2>
+<ul>
+<li><strong>문자열 대소문자 구분 (Collation)</strong>
+<ul>
+<li><strong>표준 SQL 계열(Oracle, PostgreSQL 등):</strong> 기본적으로 대소문자를 구분합니다 (<code>'Apple' &#x3C;> 'apple'</code>).</li>
+<li><strong>MySQL:</strong> 기본 문자셋(<code>utf8mb4_0900_ai_ci</code> 등 <code>_ci</code>로 끝나는 설정)에서는 대소문자를 구분하지 않습니다. 구분이 필요하면 <code>BINARY</code> 연산자나 <code>_cs</code> / <code>_bin</code> Collation을 지정해야 합니다.</li>
+</ul>
+</li>
+<li><strong>엄격 모드 (<code>STRICT_TRANS_TABLES</code>)</strong>
+<ul>
+<li>최신 MySQL(8.0 이상)은 기본적으로 엄격 모드가 활성화되어 표준 SQL처럼 데이터 타입 불일치나 길이 초과 시 에러를 발생시킵니다. 구버전 설정에서는 경고를 띄우고 데이터를 잘라서 저장할 수 있으므로 주의해야 합니다.</li>
+</ul>
+</li>
+<li><strong>ANSI 호환 모드 활성화</strong>
+<ul>
+<li>세션이나 설정에서 <code>SET sql_mode = 'ANSI';</code>를 실행하면 큰따옴표(<code>"</code>)를 식별자로 인식하고 <code>||</code>를 문자열 연결로 처리하는 등 표준 SQL에 가깝게 동작하도록 변경할 수 있습니다.</li>
+</ul>
+</li>
+</ul> </article>  </main> </body></html>
